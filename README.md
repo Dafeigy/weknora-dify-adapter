@@ -16,7 +16,7 @@ Dify Chat API 客户端 -- /v1/chat-messages --> 本适配器 -- agent-chat/SSE 
 - 默认关闭关键词召回，使用纯向量检索，使返回分数与 Dify 的阈值语义一致。
 - WeKnora 的 `knowledge_title` 或 `knowledge_filename` 转换为 Dify 的 `title`。
 
-Agent 问答通过 `POST /v1/chat-messages` 提供，仅支持 `response_mode=streaming`。适配器创建 WeKnora 会话，并用持久化映射维护 Dify `user`、`conversation_id` 与 WeKnora session 的对应关系。WeKnora 的答案增量转换为 Dify `message` 事件，引用在 `message_end.metadata.retriever_resources` 返回。思考过程和工具事件不向 Dify 转发。
+Agent 问答通过 `POST /v1/chat-messages` 提供，仅支持 `response_mode=streaming`。适配器创建 WeKnora 会话，并用持久化映射维护 Dify `user`、`conversation_id` 与 WeKnora session 的对应关系。WeKnora 的答案增量转换为 Dify `message` 事件，引用在 `message_end.metadata.retriever_resources` 返回。首轮回答完成后，适配器用 WeKnora 的标题生成接口更新该 session 标题；标题生成失败不会中断已经完成的问答。思考过程和工具事件不向 Dify 转发。
 
 ## 准备 WeKnora API Key
 
@@ -121,6 +121,8 @@ curl -N http://localhost:8000/v1/chat-messages \
 ```
 
 首次请求返回的 `conversation_id` 可用于同一 `user` 的后续轮次。映射保存在 SQLite 中，部署多个 worker 或重启容器时必须使用共享的持久化数据库文件；示例 Compose 已挂载命名卷。聊天 Key 需要 WeKnora `chat` 能力，知识库范围还应在 WeKnora API Key 上配置白名单。
+
+WeKnora 创建会话的响应已包含新 session ID，适配器直接保存并复用它，不需要再查询会话列表。首轮答案完成后，适配器调用 `POST /sessions/{session_id}/generate_title`，将首轮用户问题和回答作为上下文；WeKnora 会生成并保存标题。
 
 ## 手工验证
 

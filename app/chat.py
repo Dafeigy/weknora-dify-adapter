@@ -1,12 +1,18 @@
 """Dify Chat API SSE conversion for WeKnora Agent responses."""
 
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Any
 from uuid import uuid4
 
 import httpx
+
+from app.client import WeKnoraClient
+from app.errors import AdapterError
+
+logger = logging.getLogger("weknora_dify_adapter.chat")
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -91,6 +97,11 @@ async def dify_stream(
     *,
     response: httpx.Response,
     conversation_id: str,
+    client: WeKnoraClient,
+    weknora_api_key: str,
+    session_id: str,
+    user_query: str,
+    generate_title_on_complete: bool,
 ) -> AsyncIterator[bytes]:
     """Translate a WeKnora event stream into Dify Chat API events."""
 
@@ -99,6 +110,7 @@ async def dify_stream(
     created_at = int(time.time())
     references: list[dict[str, Any]] = []
     usage: dict[str, Any] | None = None
+    title_answer = ""
     completed = False
     try:
         async for upstream in _events(response):
@@ -107,6 +119,8 @@ async def dify_stream(
             if event_type == "answer":
                 chunk = upstream.get("content")
                 if isinstance(chunk, str) and chunk:
+                    if len(title_answer) < 6000:
+                        title_answer += chunk[: 6000 - len(title_answer)]
                     yield _sse(
                         {
                             "event": "message",
@@ -141,6 +155,18 @@ async def dify_stream(
                 return
             elif event_type == "complete":
                 completed = True
+                if generate_title_on_complete:
+                    try:
+                        await client.generate_session_title(
+                            api_key=weknora_api_key,
+                            session_id=session_id,
+                            messages=[
+                                {"role": "user", "content": user_query[:6000]},
+                                {"role": "assistant", "content": title_answer},
+                            ],
+                        )
+                    except Exception:
+                        logger.warning("conversation_title_update_failed")
                 metadata: dict[str, Any] = {"retriever_resources": references}
                 if usage is not None:
                     metadata["usage"] = usage

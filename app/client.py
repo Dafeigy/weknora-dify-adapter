@@ -151,6 +151,41 @@ class WeKnoraClient:
             )
         return response
 
+    async def generate_session_title(
+        self,
+        *,
+        api_key: str,
+        session_id: str,
+        messages: list[dict[str, str]],
+    ) -> str:
+        """Generate and persist a WeKnora session title from conversation messages."""
+
+        path_session_id = quote(session_id, safe="")
+        try:
+            response = await self._http_client.post(
+                f"{self._api_url}/sessions/{path_session_id}/generate_title",
+                headers={"X-API-Key": api_key},
+                json={"messages": messages},
+            )
+        except httpx.TimeoutException as exc:
+            raise AdapterError(504, "upstream_timeout", "WeKnora timed out") from exc
+        except httpx.RequestError as exc:
+            raise AdapterError(502, "upstream_unavailable", "WeKnora could not be reached") from exc
+
+        self._raise_for_chat_status(response)
+        try:
+            envelope = response.json()
+            title = envelope.get("data")
+        except (ValueError, AttributeError):
+            title = None
+        if not isinstance(title, str) or not title.strip():
+            raise AdapterError(
+                502,
+                "invalid_upstream_response",
+                "WeKnora returned an invalid generated title",
+            )
+        return title.strip()
+
     @staticmethod
     def _raise_for_chat_status(response: httpx.Response) -> None:
         if response.status_code == 401:

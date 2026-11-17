@@ -153,6 +153,7 @@ def create_app(
 
         store: ConversationStore = request.app.state.conversation_store
         client: WeKnoraClient = request.app.state.weknora_client
+        is_new_conversation = not payload.conversation_id
         if payload.conversation_id:
             session_id = store.get(payload.user, payload.conversation_id)
             if session_id is None:
@@ -177,7 +178,15 @@ def create_app(
             knowledge_base_ids=active_settings.weknora_kb_ids,
         )
         return StreamingResponse(
-            dify_stream(response=upstream_response, conversation_id=conversation_id),
+            dify_stream(
+                response=upstream_response,
+                conversation_id=conversation_id,
+                client=client,
+                weknora_api_key=active_settings.weknora_chat_key,
+                session_id=session_id,
+                user_query=payload.query,
+                generate_title_on_complete=is_new_conversation,
+            ),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
