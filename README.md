@@ -1,9 +1,10 @@
 # WeKnora–Dify 知识库适配器
 
-这是一个独立部署的 FastAPI 服务，把 [Dify External Knowledge API](https://github.com/langgenius/dify-docs/blob/main/en/cloud/use-dify/knowledge/external-knowledge-api.mdx) 转换为 WeKnora 的知识库检索 API。它不会复制文档，也不修改 WeKnora 或 Dify。
+这是一个独立部署的 FastAPI 服务，提供两类 Dify 兼容接口：External Knowledge API 检索，以及 Chat API 风格的 Agent 流式问答。它不会复制文档，也不修改 WeKnora 或 Dify。
 
 ```text
-Dify -- POST /retrieval --> 本适配器 -- hybrid-search --> WeKnora
+Dify -- POST /retrieval ----------> 本适配器 -- hybrid-search --> WeKnora
+Dify Chat API 客户端 -- /v1/chat-messages --> 本适配器 -- agent-chat/SSE --> WeKnora
 ```
 
 ## 工作方式
@@ -14,6 +15,8 @@ Dify -- POST /retrieval --> 本适配器 -- hybrid-search --> WeKnora
 - `score_threshold` 转换为 `vector_threshold`，允许范围为 0–1。
 - 默认关闭关键词召回，使用纯向量检索，使返回分数与 Dify 的阈值语义一致。
 - WeKnora 的 `knowledge_title` 或 `knowledge_filename` 转换为 Dify 的 `title`。
+
+Agent 问答通过 `POST /v1/chat-messages` 提供，仅支持 `response_mode=streaming`。适配器创建 WeKnora 会话，并用持久化映射维护 Dify `user`、`conversation_id` 与 WeKnora session 的对应关系。WeKnora 的答案增量转换为 Dify `message` 事件，引用在 `message_end.metadata.retriever_resources` 返回。思考过程和工具事件不向 Dify 转发。
 
 ## 准备 WeKnora API Key
 
@@ -35,8 +38,12 @@ cp .env.example .env
 | --- | --- | --- | --- |
 | `WEKNORA_BASE_URL` | 是 | — | WeKnora 地址，可带或不带 `/api/v1` |
 | `WEKNORA_API_KEY` | 是 | — | WeKnora `retrieve` 权限 Key |
+| `WEKNORA_CHAT_API_KEY` | 否 | `WEKNORA_API_KEY` | WeKnora `chat` 权限 Key；建议单独配置，避免扩大检索 Key 权限 |
+| `WEKNORA_AGENT_ID` | 启用聊天时必填 | — | WeKnora Agent ID |
+| `WEKNORA_KNOWLEDGE_BASE_IDS` | 否 | 空 | 逗号分隔的 WeKnora 知识库 ID |
 | `DIFY_ADAPTER_API_KEY` | 是 | — | Dify 调用适配器时使用的独立 Bearer Key |
 | `WEKNORA_TIMEOUT_SECONDS` | 否 | `15` | 上游超时，范围 1–120 秒 |
+| `DIFY_CONVERSATION_DB_PATH` | 否 | `./data/conversations.sqlite3` | 会话映射 SQLite 文件；容器部署由 Compose 持久化到命名卷 |
 | `LOG_LEVEL` | 否 | `INFO` | `CRITICAL/ERROR/WARNING/INFO/DEBUG` |
 | `PORT` | 否 | `8000` | 监听端口 |
 
@@ -95,6 +102,25 @@ Authorization: Bearer <DIFY_ADAPTER_API_KEY>
 ```
 
 创建外部知识库时，将 External Knowledge ID 设置为对应的 WeKnora 知识库 ID。
+
+### 调用 Agent 流式问答
+
+聊天接口使用相同的 `DIFY_ADAPTER_API_KEY` Bearer 鉴权。Agent 和知识库由适配器环境变量指定，`inputs` 当前保留兼容但不会覆盖服务端配置；非空 `files` 暂不支持。
+
+```bash
+curl -N http://localhost:8000/v1/chat-messages \
+  -H "Authorization: Bearer $DIFY_ADAPTER_API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "inputs": {},
+    "query": "请总结知识库中的关键内容",
+    "response_mode": "streaming",
+    "conversation_id": "",
+    "user": "demo-user"
+  }'
+```
+
+首次请求返回的 `conversation_id` 可用于同一 `user` 的后续轮次。映射保存在 SQLite 中，部署多个 worker 或重启容器时必须使用共享的持久化数据库文件；示例 Compose 已挂载命名卷。聊天 Key 需要 WeKnora `chat` 能力，知识库范围还应在 WeKnora API Key 上配置白名单。
 
 ## 手工验证
 
@@ -178,5 +204,7 @@ curl -sS http://localhost:8000/retrieval \
 ## 当前边界
 
 - 一个 Dify 外部知识库对应一个 WeKnora 知识库。
+- Chat API 第一版仅支持 Agent 流式问答；不支持阻塞模式、文件输入、停止生成或断线续传。
+- 聊天调用使用单一配置的 Agent ID 和知识库范围，不支持按请求切换 Agent。
 - 不提供文档同步、Dify Dataset API、缓存、限流或管理界面。
 - 需要混合检索时，应先针对 RRF 分数做单独标定，再修改适配器的检索策略。

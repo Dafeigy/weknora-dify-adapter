@@ -7,7 +7,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN groupadd --system adapter \
-    && useradd --system --gid adapter --home-dir /app adapter
+    && useradd --system --gid adapter --home-dir /app adapter \
+    && mkdir /data \
+    && chown adapter:adapter /data
 
 COPY pyproject.toml README.md ./
 COPY app ./app

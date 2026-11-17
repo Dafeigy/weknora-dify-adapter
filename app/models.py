@@ -1,6 +1,6 @@
 """Validated Dify and WeKnora wire models."""
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -54,3 +54,21 @@ class DifyRecord(StrictModel):
 
 class DifyRetrievalResponse(StrictModel):
     records: list[DifyRecord]
+
+
+class DifyChatRequest(StrictModel):
+    model_config = ConfigDict(extra="ignore", strict=True)
+
+    inputs: dict[str, Any] = Field(default_factory=dict)
+    query: str = Field(max_length=10_000)
+    response_mode: Literal["streaming"]
+    user: str = Field(max_length=256)
+    conversation_id: str | None = Field(default=None, max_length=128)
+    files: list[dict[str, Any]] | None = None
+
+    @field_validator("query", "user")
+    @classmethod
+    def reject_blank_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be blank")
+        return value

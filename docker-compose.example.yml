@@ -6,8 +6,12 @@ services:
     environment:
       WEKNORA_BASE_URL: ${WEKNORA_BASE_URL}
       WEKNORA_API_KEY: ${WEKNORA_API_KEY}
+      WEKNORA_CHAT_API_KEY: ${WEKNORA_CHAT_API_KEY:-}
+      WEKNORA_AGENT_ID: ${WEKNORA_AGENT_ID:-}
+      WEKNORA_KNOWLEDGE_BASE_IDS: ${WEKNORA_KNOWLEDGE_BASE_IDS:-}
       DIFY_ADAPTER_API_KEY: ${DIFY_ADAPTER_API_KEY}
       WEKNORA_TIMEOUT_SECONDS: ${WEKNORA_TIMEOUT_SECONDS:-15}
+      DIFY_CONVERSATION_DB_PATH: /data/conversations.sqlite3
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       PORT: 8000
     ports:
@@ -15,6 +19,11 @@ services:
     security_opt:
       - no-new-privileges:true
     read_only: true
+    volumes:
+      - adapter_data:/data
     tmpfs:
       - /tmp:size=16m,mode=1777
+
+volumes:
+  adapter_data:
 

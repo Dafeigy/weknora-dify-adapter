@@ -11,14 +11,16 @@ from uuid import uuid4
 import httpx
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.auth import authenticate
+from app.chat import dify_stream
 from app.client import WeKnoraClient
 from app.config import Settings, get_settings
 from app.errors import AdapterError
 from app.mapping import map_request, map_response
-from app.models import DifyRetrievalRequest, DifyRetrievalResponse
+from app.models import DifyChatRequest, DifyRetrievalRequest, DifyRetrievalResponse
+from app.sessions import ConversationStore
 
 logger = logging.getLogger("weknora_dify_adapter")
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
@@ -49,6 +51,9 @@ def create_app(
         active_settings = settings or get_settings()
         logger.setLevel(active_settings.log_level)
         app.state.settings = active_settings
+        app.state.conversation_store = ConversationStore(
+            active_settings.dify_conversation_db_path
+        )
         async with httpx.AsyncClient(
             timeout=active_settings.weknora_timeout_seconds,
             transport=transport,
@@ -87,8 +92,18 @@ def create_app(
         return response
 
     @application.exception_handler(AdapterError)
-    async def handle_adapter_error(_: Request, exc: AdapterError) -> JSONResponse:
+    async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONResponse:
         headers = {"WWW-Authenticate": "Bearer"} if exc.status_code == 401 else None
+        if request.url.path.startswith("/v1/"):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content={
+                    "code": exc.error_code,
+                    "message": exc.message,
+                    "status": exc.status_code,
+                },
+                headers=headers,
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content={"error_code": exc.error_code, "message": exc.message},
@@ -96,7 +111,18 @@ def create_app(
         )
 
     @application.exception_handler(RequestValidationError)
-    async def handle_validation_error(_: Request, __: RequestValidationError) -> JSONResponse:
+    async def handle_validation_error(
+        request: Request, __: RequestValidationError
+    ) -> JSONResponse:
+        if request.url.path.startswith("/v1/"):
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "code": "invalid_param",
+                    "message": "Request validation failed",
+                    "status": 400,
+                },
+            )
         return JSONResponse(
             status_code=400,
             content={
@@ -108,6 +134,57 @@ def create_app(
     @application.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @application.post("/v1/chat-messages")
+    async def chat_messages(
+        payload: DifyChatRequest,
+        request: Request,
+        _: Annotated[None, Depends(authenticate)],
+    ) -> StreamingResponse:
+        active_settings: Settings = request.app.state.settings
+        if not active_settings.weknora_agent_id:
+            raise AdapterError(
+                503,
+                "agent_not_configured",
+                "Set WEKNORA_AGENT_ID to enable Agent chat",
+            )
+        if payload.files:
+            raise AdapterError(400, "unsupported_files", "File inputs are not supported")
+
+        store: ConversationStore = request.app.state.conversation_store
+        client: WeKnoraClient = request.app.state.weknora_client
+        if payload.conversation_id:
+            session_id = store.get(payload.user, payload.conversation_id)
+            if session_id is None:
+                raise AdapterError(
+                    404,
+                    "conversation_not_found",
+                    "Conversation was not found for this user",
+                )
+            conversation_id = payload.conversation_id
+        else:
+            session_id = await client.create_session(
+                api_key=active_settings.weknora_chat_key,
+                title=payload.query[:80],
+            )
+            conversation_id = store.create(payload.user, session_id)
+
+        upstream_response = await client.open_agent_chat(
+            api_key=active_settings.weknora_chat_key,
+            session_id=session_id,
+            query=payload.query,
+            agent_id=active_settings.weknora_agent_id,
+            knowledge_base_ids=active_settings.weknora_kb_ids,
+        )
+        return StreamingResponse(
+            dify_stream(response=upstream_response, conversation_id=conversation_id),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
 
     @application.post("/retrieval", response_model=DifyRetrievalResponse)
     async def retrieval(
