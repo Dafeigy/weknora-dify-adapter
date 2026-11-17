@@ -196,6 +196,7 @@ def create_app(
                 user_query=payload.query,
                 generate_title_on_complete=is_new_conversation,
                 external_user_id=external_user_id,
+                tokens_per_second=active_settings.dify_stream_tokens_per_second,
             ),
             media_type="text/event-stream",
             headers={

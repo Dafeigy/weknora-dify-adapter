@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     weknora_knowledge_base_ids: str = ""
     dify_adapter_api_key: SecretStr
     weknora_timeout_seconds: float = Field(default=15, ge=1, le=120)
+    dify_stream_tokens_per_second: float = Field(default=20, ge=0, le=1000)
     dify_conversation_db_path: str = "./data/conversations.sqlite3"
     log_level: Literal["CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG"] = "INFO"
     port: int = Field(default=8000, ge=1, le=65535)

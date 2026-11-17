@@ -45,6 +45,7 @@ cp .env.example .env
 | `WEKNORA_KNOWLEDGE_BASE_IDS` | 否 | 空 | 逗号分隔的 WeKnora 知识库 ID |
 | `DIFY_ADAPTER_API_KEY` | 是 | — | Dify 调用适配器时使用的独立 Bearer Key |
 | `WEKNORA_TIMEOUT_SECONDS` | 否 | `15` | 上游超时，范围 1–120 秒 |
+| `DIFY_STREAM_TOKENS_PER_SECOND` | 否 | `20` | Dify 答案流的输出速度上限；设为 `0` 时不节流 |
 | `DIFY_CONVERSATION_DB_PATH` | 否 | `./data/conversations.sqlite3` | 会话映射 SQLite 文件；容器部署由 Compose 持久化到命名卷 |
 | `LOG_LEVEL` | 否 | `INFO` | `CRITICAL/ERROR/WARNING/INFO/DEBUG` |
 | `PORT` | 否 | `8000` | 监听端口 |
@@ -210,5 +211,5 @@ curl -sS http://localhost:8000/retrieval \
 - 一个 Dify 外部知识库对应一个 WeKnora 知识库。
 - Chat API 第一版仅支持 Agent 流式问答；不支持阻塞模式、文件输入、停止生成或断线续传。
 - 聊天调用使用单一配置的 Agent ID 和知识库范围，不支持按请求切换 Agent。
-- 不提供文档同步、Dify Dataset API、缓存、限流或管理界面。
+- 不提供文档同步、Dify Dataset API、请求级限流或管理界面。答案流默认按每秒 20 个近似文本 token 输出；拉丁字母和数字连续串按一个 token 计，中文、日文和韩文字符按单字计，空白不计。
 - 需要混合检索时，应先针对 RRF 分数做单独标定，再修改适配器的检索策略。

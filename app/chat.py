@@ -1,9 +1,11 @@
 """Dify Chat API SSE conversion for WeKnora Agent responses."""
 
+import asyncio
 import json
 import logging
+import re
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +15,10 @@ from app.client import WeKnoraClient
 from app.errors import AdapterError
 
 logger = logging.getLogger("weknora_dify_adapter.chat")
+_STREAM_TOKENS = re.compile(
+    r"\s+|[\u3400-\u4dbf\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]|[^\W_]+(?:['’][^\W_]+)*|_+|[^\w\s]",
+    re.UNICODE,
+)
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -68,6 +74,21 @@ def _usage(value: Any) -> dict[str, Any] | None:
     }
 
 
+def _token_chunks(text: str) -> Iterator[tuple[str, bool]]:
+    """Yield text in approximate display-token units, preserving all whitespace."""
+
+    whitespace = ""
+    for match in _STREAM_TOKENS.finditer(text):
+        part = match.group()
+        if part.isspace():
+            whitespace += part
+        else:
+            yield whitespace + part, True
+            whitespace = ""
+    if whitespace:
+        yield whitespace, False
+
+
 async def _events(response: httpx.Response) -> AsyncIterator[dict[str, Any]]:
     data_lines: list[str] = []
     async for line in response.aiter_lines():
@@ -103,6 +124,7 @@ async def dify_stream(
     user_query: str,
     generate_title_on_complete: bool,
     external_user_id: str | None = None,
+    tokens_per_second: float = 20,
 ) -> AsyncIterator[bytes]:
     """Translate a WeKnora event stream into Dify Chat API events."""
 
@@ -122,17 +144,20 @@ async def dify_stream(
                 if isinstance(chunk, str) and chunk:
                     if len(title_answer) < 6000:
                         title_answer += chunk[: 6000 - len(title_answer)]
-                    yield _sse(
-                        {
-                            "event": "message",
-                            "task_id": task_id,
-                            "id": message_id,
-                            "message_id": message_id,
-                            "conversation_id": conversation_id,
-                            "created_at": created_at,
-                            "answer": chunk,
-                        }
-                    )
+                    for token_chunk, is_token in _token_chunks(chunk):
+                        if is_token and tokens_per_second > 0:
+                            await asyncio.sleep(1 / tokens_per_second)
+                        yield _sse(
+                            {
+                                "event": "message",
+                                "task_id": task_id,
+                                "id": message_id,
+                                "message_id": message_id,
+                                "conversation_id": conversation_id,
+                                "created_at": created_at,
+                                "answer": token_chunk,
+                            }
+                        )
             elif event_type == "references":
                 candidates = upstream.get("knowledge_references")
                 if isinstance(candidates, list):
