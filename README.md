@@ -18,6 +18,8 @@ Dify Chat API 客户端 -- /v1/chat-messages --> 本适配器 -- agent-chat/SSE 
 
 Agent 问答通过 `POST /v1/chat-messages` 提供，仅支持 `response_mode=streaming`。适配器创建 WeKnora 会话，并用持久化映射维护 Dify `user`、`conversation_id` 与 WeKnora session 的对应关系。WeKnora 的答案增量转换为 Dify `message` 事件，引用在 `message_end.metadata.retriever_resources` 返回。首轮回答完成后，适配器用 WeKnora 的标题生成接口更新该 session 标题；标题生成失败不会中断已经完成的问答。思考过程和工具事件不向 Dify 转发。
 
+创建会话、Agent 问答和标题更新请求都会带上由 Dify `user` 单向哈希得到的 `X-External-User-ID`，确保 WeKnora 启用 API Key `direct_header` 用户隔离时，这些操作始终落在同一个用户会话范围内；`tenant` 模式会继续使用空间级会话身份。WeKnora 若启用了 `signed_token` 模式，需另行提供签名身份令牌支持，当前适配器尚未实现该模式。
+
 ## 准备 WeKnora API Key
 
 在 WeKnora 中创建一把独立的 API Key：

@@ -102,6 +102,7 @@ async def dify_stream(
     session_id: str,
     user_query: str,
     generate_title_on_complete: bool,
+    external_user_id: str | None = None,
 ) -> AsyncIterator[bytes]:
     """Translate a WeKnora event stream into Dify Chat API events."""
 
@@ -164,6 +165,7 @@ async def dify_stream(
                                 {"role": "user", "content": user_query[:6000]},
                                 {"role": "assistant", "content": title_answer},
                             ],
+                            external_user_id=external_user_id,
                         )
                     except Exception:
                         logger.warning("conversation_title_update_failed")

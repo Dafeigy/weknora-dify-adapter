@@ -1,5 +1,6 @@
 """FastAPI application for the WeKnora-Dify adapter."""
 
+import hashlib
 import logging
 import re
 import time
@@ -153,6 +154,12 @@ def create_app(
 
         store: ConversationStore = request.app.state.conversation_store
         client: WeKnoraClient = request.app.state.weknora_client
+        # WeKnora can scope API-key sessions to X-External-User-ID. Send a
+        # stable, non-reversible Dify identity on every operation that touches
+        # this session so creation and subsequent Agent calls share a principal.
+        external_user_id = "dify-" + hashlib.sha256(
+            payload.user.encode("utf-8")
+        ).hexdigest()
         is_new_conversation = not payload.conversation_id
         if payload.conversation_id:
             session_id = store.get(payload.user, payload.conversation_id)
@@ -167,6 +174,7 @@ def create_app(
             session_id = await client.create_session(
                 api_key=active_settings.weknora_chat_key,
                 title=payload.query[:80],
+                external_user_id=external_user_id,
             )
             conversation_id = store.create(payload.user, session_id)
 
@@ -176,6 +184,7 @@ def create_app(
             query=payload.query,
             agent_id=active_settings.weknora_agent_id,
             knowledge_base_ids=active_settings.weknora_kb_ids,
+            external_user_id=external_user_id,
         )
         return StreamingResponse(
             dify_stream(
@@ -186,6 +195,7 @@ def create_app(
                 session_id=session_id,
                 user_query=payload.query,
                 generate_title_on_complete=is_new_conversation,
+                external_user_id=external_user_id,
             ),
             media_type="text/event-stream",
             headers={
